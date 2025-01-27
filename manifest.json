@@ -1,0 +1,37 @@
+{
+  "name": "ToDo",
+  "short_name": "ToDo",
+  "start_url": "./",
+  "display": "standalone",
+  "description": "A todo app made with vanilla JS",
+  "lang": "en",
+  "dir": "auto",
+  "theme_color": "rgb(204, 204, 204)",
+  "background_color": "rgb(204, 204, 204)",
+  "orientation": "portrait",
+  "categories": [
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "https://www.pwabuilder.com/assets/icons/icon_512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "https://www.pwabuilder.com/assets/icons/icon_192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "prefer_related_applications": false,
+  "shortcuts": [
+    {
+      "name": "New Task",
+      "url": "./",
+      "description": "(to be implemented) Takes you directly to create a new task"
+    }
+  ]
+}

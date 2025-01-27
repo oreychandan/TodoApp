@@ -1,24 +1,14 @@
 // src/lib/core.js
+var Log = console.log;
 var UN = void 0;
 var Void = () => {
 };
-var I = (v) => v;
 var K = (v) => () => v;
-var E = (f, returnF = false) => (v) => (f(v), returnF ? f : v);
 var V = (v) => (f) => f(v);
 var Do = (f) => f();
 var Pipe = (...fns) => (v) => fns.reduce((r, g) => g(r), v);
 var Flow = (v, ...fns) => Pipe(...fns)(v);
 var OnUN = (v, getV) => v === UN ? getV() : v;
-var Lazy = (get = I) => {
-  let _ = (a) => {
-    const v = get(a);
-    get = UN;
-    _ = () => v;
-    return v;
-  };
-  return (a) => _(a);
-};
 var Mutable = (v) => ObjectFreeze({
   get: () => v,
   set: (v2) => v = v2
@@ -49,9 +39,9 @@ var ObjectPick = (o, keys, mutate = false) => ObjectOmit(
   mutate
 );
 var ObjectMapEntries = (o, map) => Object.fromEntries(Object.entries(o).map(map));
-var Signal = (v, f = Void) => {
+var Signal = (v, f = Void, useSet = Void) => {
   const value = Mutable(v), event = Mutable(f);
-  return ObjectFreeze({
+  const sig = ObjectFreeze({
     get: value.get,
     set: (v2) => {
       value.set(v2);
@@ -62,6 +52,8 @@ var Signal = (v, f = Void) => {
     },
     event
   });
+  useSet(sig.set);
+  return sig;
 };
 var Emit = (emittable, v) => {
   if (typeof emittable === "function") emittable(v);
@@ -103,7 +95,7 @@ var StyleToString = (k, v) => `${k}: ${v};`;
 var StylesToString = (styles) => Object.entries(styles).map(([k, v]) => StyleToString(k, v)).join("");
 var StyleSheet = (styles) => Object.entries(styles).map(([k, v]) => `${k} { ${StylesToString(GetStyles(v))} }`).join("");
 var SetStyle = (el, k, v) => v === DROP ? el.style.removeProperty(to_kebab_case(k)) : el.style.setProperty(to_kebab_case(k), v);
-var SetAttr = (el, k, v) => v === DROP ? el.removeAttribute(k) : el.setAttribute(k, v);
+var SetAttr = (el, k, v) => v === DROP ? el.removeAttribute(k) : typeof v === "boolean" ? SetAttr(el, k, v ? "" : DROP) : el.setAttribute(k, v);
 var SetProp = ObjectSet;
 var [SetStyleSig, SetStyles] = get_set_multi_fn(SetStyle);
 var [SetAttrSig, SetAttrs] = get_set_multi_fn(SetAttr);
@@ -115,8 +107,8 @@ var PushEvents = (el, events) => Object.entries(events).forEach(([name, fn_or_o]
 var _getActionList = (options) => Object.keys(
   ObjectPick(options, [
     "styles",
-    "attrs",
-    "props",
+    "attributes",
+    "properties",
     "events",
     "children",
     "useRef"
@@ -124,8 +116,8 @@ var _getActionList = (options) => Object.keys(
 );
 var _getActionMap = (options) => ({
   styles: () => SetStyles(options.el, options.styles),
-  attrs: () => SetAttrs(options.el, options.attrs),
-  props: () => SetProps(options.el, options.props),
+  attributes: () => SetAttrs(options.el, options.attributes),
+  properties: () => SetProps(options.el, options.properties),
   events: () => PushEvents(options.el, options.events),
   children: () => options.el.append(
     ...Flow(
@@ -133,263 +125,323 @@ var _getActionMap = (options) => ({
       (arr) => Array.isArray(arr) ? arr : [arr]
     ).map(H)
   ),
-  useRef: () => options.useRef(options.el)
+  useRef: () => {
+    const _options = options.useRef(options.el);
+    if (_options !== UN)
+      H({
+        ..._options,
+        el: options.el
+      });
+  }
 });
 var H = (options) => {
   if (typeof options === "string") return options;
-  if (typeof options.comment === "string") return Comment(options.comment);
-  if (options.el === UN)
+  if (typeof options.comment === "string") {
+    return Comment(options.comment);
+  }
+  if (options.el === UN) {
     options.el = options.isSvg ? SVG(OnUN(options.tag, K("svg"))) : Ele(OnUN(options.tag, K("div")));
+  }
   const actions = _getActionList(options);
   const actionMap = _getActionMap(options);
   actions.forEach((k) => actionMap[k]());
   return options.el;
 };
 
-// src/apps/todo1.js
-var app = () => {
-  const Logic = Do(() => {
-    const showAddTaskButton$ = Signal(false, []);
-    let init = true;
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (init) init = false;
-        else {
-          if (entry.isIntersecting) {
-            showAddTaskButton$.set(false);
-          } else {
-            showAddTaskButton$.set(true);
-          }
-        }
-      });
-    });
-    const newTask$ = Signal(UN, []);
-    return {
-      showAddTaskButton$,
-      newTask$,
-      nextTask: UN,
-      prevTask: UN,
-      observer
-    };
-  });
-  const newTask = (_) => {
-    const isTask = Mutable(false);
-    const content$ = Signal("", []);
-    const hasContent$ = Signal(false, []);
-    content$.event.get().push((content) => {
-      hasContent$.set(content.length > 0);
-    });
-    hasContent$.event.get().push((hasContent) => {
-      if (hasContent && !isTask.get()) {
-        isTask.set(true);
-        queueMicrotask((_2) => {
-          Logic.newTask$.set();
-        });
-      }
-    });
-    const taskInputEventHandler = (e) => {
-      content$.set(e.target.value);
-    };
-    const checkboxVisibility = (set) => hasContent$.event.get().push(
-      E(
-        (hasContent) => set(hasContent ? "visible" : "hidden"),
-        true
-      )(hasContent$.get())
-    );
-    const textbox = Lazy((ctx = {}) => ({
-      setHeight: (set) => {
-        content$.event.get().push((content) => {
-          const lineCount = ctx.getLineCount();
-          if (content === "") set("auto");
-          else if (lineCount < 6) {
-            set("auto");
-            set(ctx.getScrollHeight());
-          }
-        });
-      },
-      useRef: (TaskContentRef) => {
-        ctx.ref = TaskContentRef;
-        ctx.getScrollHeight = () => TaskContentRef.scrollHeight;
-        ctx.getLineCount = () => TaskContentRef.value.split("\n").length;
-      },
-      click: (_2) => {
-        ctx.ref.parentNode.parentNode.removeChild(ctx.ref.parentNode);
-      }
-    }));
-    return H({
-      styles: {
-        display: "flex",
-        width: "100%",
-        border: "1px solid var(--color-1)",
-        borderRadius: "15px",
-        padding: "5px",
-        gap: "5px",
-        boxSizing: "border-box"
-      },
-      children: [
-        // <TaskDoneCheckbox />
-        {
-          styles: {
-            height: "40px",
-            width: "40px",
-            borderRadius: "10px",
-            border: "1px solid var(--color-1)",
-            visibility: checkboxVisibility
-          },
-          events: {
-            click: textbox().click
-            // _ => {
-            //   Core.Log('TaskDoneCheckbox clicked');
-            // },
-          }
-        },
-        // <TaskContent />
-        {
-          tag: "textarea",
-          attrs: {
-            type: "text",
-            placeholder: "Enter task content here",
-            // no autocorrect and such
-            autocorrect: "off",
-            autocapitalize: "off",
-            autocomplete: "off",
-            spellcheck: "false"
-          },
-          styles: {
-            flexGrow: 1,
-            padding: "5px",
-            // border: '1px solid black',
-            color: "var(--color-1)",
-            fontFamily: "monospace",
-            borderRadius: "5px",
-            resize: "none",
-            height: textbox().setHeight,
-            backgroundColor: "transparent",
-            border: "none",
-            outline: "none"
-            // overflow: set => clicked$.event.get().push(
-            //   _ =>
-            // )
-          },
-          events: {
-            input: taskInputEventHandler
-          },
-          useRef: textbox().useRef
-        }
-      ],
-      useRef: (TaskRef) => {
-        Logic.observer.observe(TaskRef);
-        if (Logic.nextTask !== UN) {
-          Logic.observer.unobserve(Logic.nextTask);
-        }
-        Logic.prevTask = Logic.nextTask;
-        Logic.nextTask = TaskRef;
-      }
-    });
+// src/apps/todo5.js
+var Quad = ({
+  all = "0px",
+  horizontal = all,
+  vertical = all,
+  left = horizontal,
+  right = horizontal,
+  top = vertical,
+  bottom = vertical
+} = {}) => `${top} ${right} ${bottom} ${left}`;
+var BoxShadow = ({
+  x = 0,
+  y = 0,
+  blur = 0,
+  spread = 0,
+  color = "black"
+} = {}) => `${x}px ${y}px ${blur}px ${spread}px ${color}`;
+var App = (_) => {
+  const appState = {};
+  appState.bottomBttnSize = 50;
+  appState.tasklistRef = Mutable();
+  appState.pushTaskEl = (el) => appState.tasklistRef.get().appendChild(el);
+  appState.dropTaskEl = (el) => appState.tasklistRef.get().removeChild(el);
+  appState.focusedTask = Mutable();
+  appState.$isTaskFocused = Signal(false, []);
+  appState.setEditDoneBttnVisibility = (set) => {
+    const $ = Signal(appState.$isTaskFocused.get(), []);
+    const f = (isFocused) => isFocused ? set(DROP) : set("hidden");
+    appState.$isTaskFocused.event.get().push(f);
+    set(f($.get()));
+    return $;
+  };
+  appState.setDeleteBttnVisibility = appState.setEditDoneBttnVisibility;
+  appState.userActions = {
+    newTaskBttnClick: (_2) => {
+      Log("Todo: create a empty task and add it to list");
+      const task = Components.Task();
+      appState.pushTaskEl(task.el);
+    },
+    editDoneBttnClick: Void,
+    deleteBttnClick: Void
   };
   H({
     el: document.body,
     styles: {
-      backgroundColor: "white"
-    }
-  });
-  H({
-    el: document.body.querySelector("#root"),
-    styles: {
-      "--color-1": "blueviolet",
-      backgroundColor: "white",
-      height: "100vh",
-      width: "100vw",
-      boxSizing: "border-box",
-      padding: "5px"
+      backgroundColor: "hsl(0 0% 100% / 1)",
+      // corrections
+      margin: "0px",
+      padding: "0px",
+      overflow: "hidden",
+      overscrollBehavior: "none",
+      width: "100%",
+      height: "100%",
+      boxSizing: "border-box"
     },
-    children: [
-      // StyleSheet
-      {
-        tag: "style",
-        attrs: {
-          type: "text/css"
-        },
-        children: StyleSheet({
-          "textarea::placeholder": {
-            color: "var(--color-1)",
-            fontFamily: "monospace",
-            fontStyle: "italic",
-            textDecorationLine: "underline",
-            textDecorationStyle: "double"
+    children: {
+      tag: "style",
+      properties: {
+        innerText: StyleSheet({
+          ":fullscreen::backdrop": {
+            display: "none"
           }
         })
+      }
+    }
+  });
+  const Components = {};
+  Components.Task = () => {
+    const taskState = {};
+    taskState.ref = Mutable();
+    taskState.$scrollHeight = Signal();
+    taskState.useRef = (taskRef) => {
+      taskState.ref.set(taskRef);
+    };
+    taskState.deleteItem = (_2) => {
+      taskState.ref.get().remove();
+      appState.widthResizeObserver.unobserve(taskState.ref.get());
+    };
+    taskState.updateHeight = (_2) => {
+      taskState.$scrollHeight.set(0);
+      const scrollHeight = taskState.ref.get().scrollHeight;
+      taskState.$scrollHeight.set(scrollHeight);
+    };
+    taskState.styles = {
+      height: (set) => {
+        taskState.$scrollHeight.event.set((height) => set(`${height}px`));
+        queueMicrotask((_2) => {
+          set("0px");
+          const taskRef = taskState.ref.get();
+          H({
+            el: taskRef,
+            properties: {
+              value: ""
+            }
+          });
+          const scrollHeight = taskRef.scrollHeight;
+          taskState.$scrollHeight.set(scrollHeight);
+        });
+      }
+    };
+    taskState.events = {
+      input: (ev) => {
+        taskState.updateHeight();
       },
-      // <TaskList />
-      {
+      focus: (_2) => {
+        Log("focus", taskState.ref.get());
+        appState.focusedTask.set(taskState.ref.get());
+        MapMutable(
+          appState.$isTaskFocused,
+          (isFocused, skip) => isFocused ? skip : true
+        );
+      },
+      blur: (_2) => {
+        Log("blur", taskState.ref.get());
+        setTimeout((_3) => {
+          if (appState.focusedTask.get() === taskState.ref.get()) {
+            appState.focusedTask.set();
+            appState.$isTaskFocused.set(false);
+          }
+        }, 0);
+      }
+    };
+    taskState.windowResizeListener = (ev) => {
+      taskState.updateHeight();
+    };
+    window.addEventListener("resize", taskState.windowResizeListener);
+    const opts = {
+      styles: {
+        padding: "5px",
+        outline: "1px solid",
+        borderRadius: "14px"
+      },
+      children: {
+        tag: "textarea",
+        useRef: taskState.useRef,
         styles: {
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          height: "100%",
-          overflow: "scroll",
-          scrollBehavior: "smooth",
-          gap: "5px"
+          width: "100%",
+          padding: "0px",
+          resize: "none",
+          overflow: "hidden",
+          border: "none",
+          outline: "none",
+          ...taskState.styles
         },
-        useRef: (TaskListRef) => {
-          Logic.newTask$.event.get().push(
-            E((_) => {
-              TaskListRef.append(newTask());
-            }, true)(Do)
-          );
+        events: taskState.events
+      }
+    };
+    return {
+      el: H(opts),
+      updateHeight: taskState.updateHeight,
+      cleanup: (_2) => {
+        window.removeEventListener("resize", taskState.windowResizeListener);
+      }
+    };
+  };
+  Components.taskList = {
+    styles: {
+      height: "100%",
+      width: "100%",
+      padding: Quad({
+        top: "10px",
+        bottom: `${50 + 10 * 2 + 10}px`,
+        horizontal: "10px"
+      }),
+      boxSizing: "border-box",
+      overflowX: "hidden",
+      overflowY: "auto",
+      scrollBehavior: "smooth",
+      overscrollBehavior: "none",
+      display: "flex",
+      flexDirection: "column",
+      gap: "10px"
+    },
+    useRef: appState.tasklistRef.set
+  };
+  Components.actionBar = {
+    attributes: {
+      class: "add-bttn-bar"
+    },
+    styles: {
+      position: "absolute",
+      bottom: "0px",
+      width: "100%",
+      padding: Quad({ vertical: "10px" }),
+      boxSizing: "border-box"
+    },
+    children: [
+      {
+        // bar bg
+        styles: {
+          overflow: "hidden",
+          position: "absolute",
+          width: "100%",
+          height: "100%",
+          zIndex: 0,
+          bottom: "0px"
+        },
+        children: {
+          styles: {
+            position: "absolute",
+            height: "100%",
+            width: "100%",
+            transform: "scale(1.5)",
+            backdropFilter: "blur(3px)",
+            backgroundColor: "hsl(0deg 0% 68.65% / 12.16%)"
+          }
         }
       },
-      // (showAddTaskButton && <NewTaskButton />)
       {
+        // buttons
         styles: {
-          height: "45px",
-          width: "45px",
-          border: "1px solid var(--color-1)",
-          boxSizing: "border-box",
-          borderRadius: "10px",
-          visibility: (set) => {
-            Logic.showAddTaskButton$.event.get().push((b) => {
-              set(b ? "visible" : "hidden");
-            });
-          },
-          position: "absolute",
-          bottom: "10px",
-          left: "calc(50% - 20px)",
-          backgroundColor: "white",
-          boxShadow: "0px 0px 4px 0px hsl(0deg 0% 0% / 50%)"
+          zIndex: 1,
+          height: "100%",
+          width: "100%",
+          display: "flex",
+          justifyContent: "space-evenly",
+          alignItems: "center",
+          position: "relative"
         },
         children: [
           {
-            // vertical
+            // edit done bttn
             styles: {
-              position: "absolute",
-              top: "50%",
-              left: "calc(50% - 2px)",
-              width: "4px",
-              height: "80%",
-              backgroundColor: "var(--color-1)",
-              borderRadius: "5px",
-              transform: "translateY(-50%)"
+              width: `${appState.bottomBttnSize}px`,
+              height: `${appState.bottomBttnSize}px`,
+              borderRadius: "10px",
+              border: `1px solid black`,
+              visibility: appState.setEditDoneBttnVisibility
+            },
+            events: {
+              click: appState.userActions.editDoneBttnClick
             }
           },
           {
-            // horizontal
+            // add bttn
+            properties: {
+              innerText: "+"
+            },
             styles: {
-              position: "absolute",
-              top: "calc(50% - 2px)",
-              left: "50%",
-              height: "4px",
-              width: "80%",
-              backgroundColor: "var(--color-1)",
-              borderRadius: "5px",
-              transform: "translateX(-50%)"
+              width: `${appState.bottomBttnSize}px`,
+              height: `${appState.bottomBttnSize}px`,
+              borderRadius: "50%",
+              backgroundColor: "#181818",
+              backgroundImage: "linear-gradient(135deg, hsl(0deg 0% 100% / 20%), transparent)",
+              boxShadow: BoxShadow({
+                blur: 4,
+                x: 1,
+                y: 1
+              }),
+              display: "flex",
+              flexWrap: "wrap",
+              alignContent: "center",
+              justifyContent: "center",
+              fontSize: "xx-large",
+              color: "hsl(0deg 0% 80%)",
+              userSelect: "none"
+            },
+            events: {
+              click: appState.userActions.newTaskBttnClick
+            }
+          },
+          {
+            // delete bttn
+            styles: {
+              width: `${appState.bottomBttnSize}px`,
+              height: `${appState.bottomBttnSize}px`,
+              borderRadius: "10px",
+              border: `1px solid black`,
+              visibility: appState.setDeleteBttnVisibility
+            },
+            events: {
+              click: appState.userActions.deleteBttnClick
             }
           }
         ]
       }
     ]
+  };
+  H({
+    el: document.getElementById("root"),
+    styles: {
+      height: "100%",
+      width: "100%",
+      boxSizing: "border-box"
+    },
+    children: [Components.taskList, Components.actionBar]
   });
+};
+var appData = {
+  name: "ToDo"
+};
+var appInit = {
+  title: appData.name
 };
 
 // src/main.js
-app();
+App();
