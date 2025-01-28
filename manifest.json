@@ -6,7 +6,7 @@
   "description": "A todo app made with vanilla JS",
   "lang": "en",
   "dir": "auto",
-  "theme_color": "rgb(204, 204, 204)",
+  "theme_color": "rgb(0, 0, 0)",
   "background_color": "rgb(204, 204, 204)",
   "orientation": "portrait",
   "categories": [
